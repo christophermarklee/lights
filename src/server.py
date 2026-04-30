@@ -318,6 +318,18 @@ async def _run_continuous() -> None:
         _scene_phase = None
 
 
+async def _reconnect_if_needed() -> None:
+    """Replace any disconnected clients by re-running device discovery."""
+    global _clients
+    if any(not c.is_connected for c in _clients):
+        for c in _clients:
+            try:
+                await c.disconnect()
+            except Exception:
+                pass
+        _clients = await connect_devices()
+
+
 async def _broadcast(r: int, g: int, b: int) -> None:
     dead = []
     for ws in list(_ws_connections):
@@ -425,6 +437,7 @@ async def set_color(payload: ColorPayload):
 @app.post("/api/on")
 async def turn_on():
     global _current_rgb
+    await _reconnect_if_needed()
     for c in list(_clients):
         try:
             await c.write_gatt_char(ELK_WRITE_UUID, ELK_TURN_ON, response=False)
