@@ -125,6 +125,7 @@ SCENES = [
 _SCENES_BY_KEY = {s["key"]: s for s in SCENES}
 
 FAVORITES_FILE = Path("/data/favorites.json")
+STATE_FILE = Path("/data/state.json")
 
 
 def _load_favorites() -> list[dict]:
@@ -137,6 +138,23 @@ def _load_favorites() -> list[dict]:
 def _save_favorites(favs: list[dict]) -> None:
     FAVORITES_FILE.parent.mkdir(parents=True, exist_ok=True)
     FAVORITES_FILE.write_text(json.dumps(favs))
+
+
+def _load_state() -> dict:
+    try:
+        return json.loads(STATE_FILE.read_text())
+    except Exception:
+        return {"mode": "continuous", "r": 0, "g": 0, "b": 0}
+
+
+def _save_state() -> None:
+    STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    STATE_FILE.write_text(json.dumps({
+        "mode": "continuous" if _continuous else "manual",
+        "r": _current_rgb[0],
+        "g": _current_rgb[1],
+        "b": _current_rgb[2],
+    }))
 
 # ── State ─────────────────────────────────────────────────────────────────────
 
@@ -261,9 +279,20 @@ async def _broadcast(r: int, g: int, b: int) -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _clients, _favorites
+    global _clients, _favorites, _current_rgb, _scene_task
     _favorites = _load_favorites()
+    saved = _load_state()
+    _current_rgb = (saved["r"], saved["g"], saved["b"])
     _clients = await connect_devices()
+    # Restore last color to devices
+    if _clients and any(_current_rgb):
+        try:
+            await set_all(_clients, *_current_rgb)
+        except RuntimeError:
+            pass
+    # Resume mode: continuous by default, or if that's what was running
+    if saved.get("mode", "continuous") == "continuous":
+        _scene_task = asyncio.create_task(_run_continuous())
     yield
     for c in _clients:
         try:
@@ -335,6 +364,7 @@ async def set_color(payload: ColorPayload):
         except RuntimeError:
             pass
     await _broadcast(*_current_rgb)
+    _save_state()
     return {"ok": True}
 
 
@@ -353,6 +383,7 @@ async def turn_on():
         except RuntimeError:
             pass
     await _broadcast(*_current_rgb)
+    _save_state()
     return {"ok": True}
 
 
@@ -366,6 +397,7 @@ async def turn_off():
         except Exception:
             pass
     await _broadcast(0, 0, 0)
+    _save_state()
     return {"ok": True}
 
 
@@ -394,6 +426,7 @@ async def start_continuous():
         except (asyncio.CancelledError, Exception):
             pass
     _scene_task = asyncio.create_task(_run_continuous())
+    _save_state()
     return {"ok": True, "continuous": True}
 
 
@@ -409,6 +442,7 @@ async def play_scene(key: str):
         except (asyncio.CancelledError, Exception):
             pass
     _scene_task = asyncio.create_task(_run_scene(key))
+    _save_state()
     return {"ok": True, "playing": key}
 
 
@@ -421,6 +455,7 @@ async def stop_scene():
             await _scene_task
         except (asyncio.CancelledError, Exception):
             pass
+    _save_state()
     return {"ok": True}
 
 
