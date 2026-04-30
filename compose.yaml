@@ -1,0 +1,17 @@
+services:
+  lights:
+    build:
+      context: .
+      dockerfile: Containerfile
+    ports:
+      - "8000:8000"
+    # BLE via BlueZ requires access to the host D-Bus socket and Bluetooth stack
+    volumes:
+      - /run/dbus/system_bus_socket:/run/dbus/system_bus_socket
+      - lights_data:/data
+    network_mode: host
+    privileged: true
+    restart: unless-stopped
+
+volumes:
+  lights_data:
