@@ -24,6 +24,17 @@ jobs:
             sudo dnf install -y podman-compose
           fi
 
+      - name: Ensure firewalld permits HTTP and HTTPS
+        run: |
+          if sudo firewall-cmd --state &>/dev/null; then
+            sudo firewall-cmd --permanent --add-service=http
+            sudo firewall-cmd --permanent --add-service=https
+            sudo firewall-cmd --reload
+            echo "firewalld: http and https enabled"
+          else
+            echo "firewalld not running, skipping"
+          fi
+
       - name: Build and (re)start service
         run: podman-compose up -d --build
 

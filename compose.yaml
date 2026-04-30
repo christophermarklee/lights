@@ -13,5 +13,13 @@ services:
     privileged: true
     restart: unless-stopped
 
+  proxy:
+    build:
+      context: proxy
+    network_mode: host
+    restart: unless-stopped
+    depends_on:
+      - lights
+
 volumes:
   lights_data:

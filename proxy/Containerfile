@@ -1,0 +1,24 @@
+FROM httpd:2.4
+
+RUN apt-get update -qq \
+ && apt-get install -y --no-install-recommends openssl \
+ && rm -rf /var/lib/apt/lists/*
+
+# Enable mod_ssl, mod_rewrite, mod_proxy, mod_proxy_http, mod_proxy_wstunnel
+RUN sed -i \
+    -e 's/^#\(LoadModule ssl_module\)/\1/' \
+    -e 's/^#\(LoadModule rewrite_module\)/\1/' \
+    -e 's/^#\(LoadModule proxy_module\)/\1/' \
+    -e 's/^#\(LoadModule proxy_http_module\)/\1/' \
+    -e 's/^#\(LoadModule proxy_wstunnel_module\)/\1/' \
+    /usr/local/apache2/conf/httpd.conf
+
+# Self-signed certificate (10-year validity)
+RUN mkdir -p /usr/local/apache2/conf/ssl \
+ && openssl req -x509 -nodes -days 3650 -newkey rsa:2048 \
+      -keyout /usr/local/apache2/conf/ssl/server.key \
+      -out    /usr/local/apache2/conf/ssl/server.crt \
+      -subj   "/CN=lights"
+
+COPY proxy.conf /usr/local/apache2/conf/extra/proxy.conf
+RUN echo "Include conf/extra/proxy.conf" >> /usr/local/apache2/conf/httpd.conf
