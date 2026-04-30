@@ -37,3 +37,7 @@ jobs:
           echo "Service did not become healthy after 150s"
           podman-compose logs
           exit 1
+
+      - name: Prune unused images, volumes and build cache
+        if: always()
+        run: podman system prune -af --volumes
