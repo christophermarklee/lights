@@ -78,4 +78,4 @@ jobs:
 
       - name: Prune unused images and build cache
         if: always()
-        run: podman system prune -af
+        run: podman system prune -af || true
