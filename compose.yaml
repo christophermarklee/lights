@@ -6,6 +6,10 @@ services:
     ports:
       - "8000:8000"
     # BLE via BlueZ requires access to the host D-Bus socket and Bluetooth stack
+    # keep-groups passes the host user's supplementary groups (incl. bluetooth)
+    # into the rootless container so D-Bus EXTERNAL auth succeeds
+    group_add:
+      - keep-groups
     volumes:
       - /run/dbus/system_bus_socket:/run/dbus/system_bus_socket
       - lights_data:/data
