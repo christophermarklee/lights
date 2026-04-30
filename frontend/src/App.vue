@@ -15,6 +15,7 @@
     <div class="tabs">
       <button :class="['tab', { active: activeTab === 'color' }]" @click="activeTab = 'color'">Color</button>
       <button :class="['tab', { active: activeTab === 'scenes' }]" @click="activeTab = 'scenes'">Scenes</button>
+      <button :class="['tab', { active: activeTab === 'pro' }]" @click="activeTab = 'pro'">Pro Lighting</button>
     </div>
 
     <!-- ── Color tab ── -->
@@ -145,6 +146,31 @@
         </div>
       </div>
     </div>
+    <!-- ── Pro Lighting tab ── -->
+    <div v-show="activeTab === 'pro'" class="tab-content pro-section">
+      <p class="scenes-intro">
+        One-click colour-temperature presets based on professional film, TV, and photography
+        standards — from warm tungsten studio light to cool daylight reference.
+      </p>
+      <div class="pro-cards">
+        <div
+          v-for="preset in proPresets"
+          :key="preset.key"
+          class="pro-card"
+          @click="applyProPreset(preset)"
+        >
+          <div class="pro-swatch" :style="{ background: `rgb(${preset.r},${preset.g},${preset.b})` }" />
+          <div class="pro-body">
+            <div class="pro-title-row">
+              <span class="scene-icon">{{ preset.icon }}</span>
+              <h3 class="scene-name">{{ preset.name }}</h3>
+              <span class="pro-kelvin">{{ preset.kelvin }} K</span>
+            </div>
+            <p class="scene-desc">{{ preset.description }}</p>
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -163,6 +189,9 @@ const scenes = ref([])
 const playingScene = ref(null)
 const playingPhase = ref(null)
 const isContinuous = ref(false)
+
+// Pro lighting presets
+const proPresets = ref([])
 
 const hexInput = ref('000000')
 const rInput = ref(0)
@@ -236,6 +265,11 @@ async function fetchScenes() {
   scenes.value = await res.json()
 }
 
+async function fetchProPresets() {
+  const res = await fetch('/api/pro-lighting')
+  proPresets.value = await res.json()
+}
+
 async function fetchSceneStatus() {
   const res = await fetch('/api/scenes/status')
   const data = await res.json()
@@ -288,6 +322,11 @@ async function applyFavorite(fav) {
   applyRemoteColor(fav.r, fav.g, fav.b)
 }
 
+async function applyProPreset(preset) {
+  await sendColor(preset.r, preset.g, preset.b)
+  applyRemoteColor(preset.r, preset.g, preset.b)
+}
+
 async function sendColor(r, g, b) {
   await fetch('/api/color', {
     method: 'POST',
@@ -314,7 +353,7 @@ function applyRemoteColor(r, g, b) {
 }
 
 onMounted(async () => {
-  await Promise.all([fetchState(), fetchFavorites(), fetchScenes()])
+  await Promise.all([fetchState(), fetchFavorites(), fetchScenes(), fetchProPresets()])
   await fetchSceneStatus()
 
   // Poll scene status every 3 seconds
@@ -834,5 +873,63 @@ header {
 
 .stop-btn:hover {
   background: #4a2020;
+}
+
+/* ── Pro Lighting tab ──────────────────────────────────────────────────────── */
+
+.pro-section {
+  padding: 1.5rem 1rem 3rem;
+  max-width: 560px;
+}
+
+.pro-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  width: 100%;
+}
+
+.pro-card {
+  display: flex;
+  align-items: stretch;
+  background: #1a1a1a;
+  border: 1px solid #2a2a2a;
+  border-radius: 14px;
+  overflow: hidden;
+  cursor: pointer;
+  transition: border-color 0.15s, transform 0.12s;
+}
+
+.pro-card:hover {
+  border-color: #444;
+  transform: translateY(-1px);
+}
+
+.pro-card:active {
+  transform: translateY(0);
+}
+
+.pro-swatch {
+  width: 68px;
+  flex-shrink: 0;
+}
+
+.pro-body {
+  padding: 0.9rem 1.1rem;
+  flex: 1;
+}
+
+.pro-title-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.35rem;
+}
+
+.pro-kelvin {
+  margin-left: auto;
+  font-size: 0.75rem;
+  color: #555;
+  font-variant-numeric: tabular-nums;
 }
 </style>

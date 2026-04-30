@@ -124,6 +124,60 @@ SCENES = [
 
 _SCENES_BY_KEY = {s["key"]: s for s in SCENES}
 
+# ── Professional lighting presets ──────────────────────────────────────────────
+# Color-temperature approximations for RGB LED strips.
+# Values are practical rather than physically exact — tuned for use as room fill light.
+PRO_LIGHTING = [
+    {
+        "key": "webcam",
+        "name": "Webcam / Meeting",
+        "icon": "💻",
+        "kelvin": 4500,
+        "description": "Neutral warm white, flattering on skin tones. Ideal for video calls, meetings, and casual streaming.",
+        "r": 255, "g": 210, "b": 155,
+    },
+    {
+        "key": "portrait_warm",
+        "name": "Portrait Warm",
+        "icon": "🎙️",
+        "kelvin": 4000,
+        "description": "Soft warm key light. Flattering fill for on-camera interviews, podcasts, and talking-head video.",
+        "r": 255, "g": 185, "b": 105,
+    },
+    {
+        "key": "studio_tungsten",
+        "name": "Studio Tungsten",
+        "icon": "🎬",
+        "kelvin": 3200,
+        "description": "Classic 3200 K film studio standard. Warm and cinematic — the traditional TV and movie lighting reference.",
+        "r": 255, "g": 160, "b": 65,
+    },
+    {
+        "key": "daylight_photo",
+        "name": "Daylight / Photography",
+        "icon": "📷",
+        "kelvin": 5500,
+        "description": "Natural 5500 K daylight balance — matches electronic flash and outdoor light for true-colour photography.",
+        "r": 255, "g": 238, "b": 210,
+    },
+    {
+        "key": "overcast_reference",
+        "name": "Overcast / Reference",
+        "icon": "🖥️",
+        "kelvin": 6500,
+        "description": "Cool 6500 K D65 reference — the NTSC/PAL TV and sRGB/internet standard. Good for colour-accurate work.",
+        "r": 205, "g": 220, "b": 255,
+    },
+    {
+        "key": "cinematic_golden",
+        "name": "Cinematic Golden",
+        "icon": "🌇",
+        "kelvin": 2700,
+        "description": "Dramatic warm amber at 2700 K. Moody low-key lighting for B-roll, product shots, and creative portraits.",
+        "r": 255, "g": 135, "b": 40,
+    },
+]
+
 FAVORITES_FILE = Path("/data/favorites.json")
 STATE_FILE = Path("/data/state.json")
 
@@ -404,6 +458,11 @@ async def turn_off():
 @app.get("/api/scenes")
 async def get_scenes():
     return SCENES
+
+
+@app.get("/api/pro-lighting")
+async def get_pro_lighting():
+    return PRO_LIGHTING
 
 
 @app.get("/api/scenes/status")
