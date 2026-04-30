@@ -24,6 +24,21 @@ jobs:
             sudo dnf install -y podman-compose
           fi
 
+      - name: Ensure runner user is in the bluetooth group
+        run: |
+          if ! groups | grep -qw bluetooth; then
+            sudo usermod -aG bluetooth "$USER"
+            echo "Added $USER to bluetooth group — effective for podman via keep-groups"
+          else
+            echo "$USER already in bluetooth group"
+          fi
+
+      - name: Allow rootless binding to ports 80 and 443
+        run: |
+          sudo sysctl -w net.ipv4.ip_unprivileged_port_start=80
+          # persist across reboots
+          echo "net.ipv4.ip_unprivileged_port_start=80" | sudo tee /etc/sysctl.d/99-unprivileged-ports.conf
+
       - name: Ensure firewalld permits HTTP and HTTPS
         run: |
           if sudo firewall-cmd --state &>/dev/null; then
@@ -36,7 +51,7 @@ jobs:
           fi
 
       - name: Build and (re)start service
-        run: podman-compose up -d --build
+        run: podman-compose up -d --build --force-recreate
 
       - name: Wait for service to be healthy
         run: |
@@ -53,6 +68,6 @@ jobs:
           podman-compose logs
           exit 1
 
-      - name: Prune unused images, volumes and build cache
+      - name: Prune unused images and build cache
         if: always()
-        run: podman system prune -af --volumes
+        run: podman system prune -af
