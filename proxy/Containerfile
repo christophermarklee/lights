@@ -4,13 +4,14 @@ RUN apt-get update -qq \
  && apt-get install -y --no-install-recommends openssl \
  && rm -rf /var/lib/apt/lists/*
 
-# Enable mod_ssl, mod_rewrite, mod_proxy, mod_proxy_http, mod_proxy_wstunnel
+# Enable mod_ssl, mod_rewrite, mod_proxy, mod_proxy_http, mod_proxy_wstunnel, mod_socache_shmcb
 RUN sed -i \
     -e 's/^#\(LoadModule ssl_module\)/\1/' \
     -e 's/^#\(LoadModule rewrite_module\)/\1/' \
     -e 's/^#\(LoadModule proxy_module\)/\1/' \
     -e 's/^#\(LoadModule proxy_http_module\)/\1/' \
     -e 's/^#\(LoadModule proxy_wstunnel_module\)/\1/' \
+    -e 's/^#\(LoadModule socache_shmcb_module\)/\1/' \
     /usr/local/apache2/conf/httpd.conf
 
 # Self-signed certificate (10-year validity)
