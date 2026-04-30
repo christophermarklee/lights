@@ -26,6 +26,11 @@ jobs:
 
       - name: Ensure runner user is in the bluetooth group
         run: |
+          # Create the group if BlueZ hasn't made it yet (Fedora server minimal install)
+          if ! getent group bluetooth &>/dev/null; then
+            sudo groupadd bluetooth
+            echo "Created bluetooth group"
+          fi
           if ! groups | grep -qw bluetooth; then
             sudo usermod -aG bluetooth "$USER"
             echo "Added $USER to bluetooth group — effective for podman via keep-groups"
