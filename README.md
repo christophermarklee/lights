@@ -11,6 +11,9 @@ A FastAPI backend connects over Bluetooth Low Energy and a Vue 3 frontend lets y
 - **Continuous mode** — automatically advances through scenes based on the current time (America/New_York)
 - **Favourites** — save and recall named colours, persisted to `/data/favorites.json`
 - **WebSocket live sync** — all connected clients stay in sync in real time
+- **Pro Lighting** — one-click professional colour-temperature presets (2700 K–6500 K) covering webcam, portrait, studio tungsten, daylight photography, D65 reference, and cinematic amber
+- **Persistent state** — last colour and mode (continuous / manual) survive container restarts via `/data/state.json`
+- **HTTPS reverse proxy** — httpd mod_ssl container terminates TLS on 443, redirects HTTP → HTTPS, and proxies WebSocket
 - **Multi-device** — controls ELK-BLEDOM and two MELK-OA21 strips simultaneously
 
 ## Stack
@@ -54,6 +57,7 @@ The service is then available at `http://localhost:8000`.
 | `POST` | `/api/scenes/{key}/play` | Play a named scene |
 | `POST` | `/api/scenes/continuous` | Start 24-hour auto-schedule |
 | `POST` | `/api/scenes/stop` | Stop any running scene |
+| `GET` | `/api/pro-lighting` | List professional colour-temperature presets |
 | `GET` | `/api/favorites` | List saved favourites |
 | `POST` | `/api/favorites` | Add a favourite `{r, g, b, name}` |
 | `DELETE` | `/api/favorites/{index}` | Remove a favourite |
@@ -63,6 +67,8 @@ The service is then available at `http://localhost:8000`.
 
 Pushing to `main` triggers the GitHub Actions workflow which:
 1. Installs Podman and podman-compose (if needed)
-2. Rebuilds and restarts the container via `podman-compose up -d --build`
-3. Polls `/api/state` until the service responds (up to 150 s)
-4. Prunes all unused images, volumes and build cache
+2. Ensures the runner user is in the `bluetooth` group and ports 80/443 are usable rootless
+3. Enables `http` and `https` services in firewalld
+4. Rebuilds and force-recreates both containers (`lights` + `proxy`) via `podman-compose up -d --build --force-recreate`
+5. Polls `/api/state` until the service responds (up to 150 s)
+6. Prunes unused images and build cache (volumes are preserved to protect persistent data)
