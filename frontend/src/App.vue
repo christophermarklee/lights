@@ -73,6 +73,19 @@
         circadian rhythm — from alerting blues in the morning to sleep-safe reds at night.
       </p>
 
+      <!-- Transition speed picker -->
+      <div class="transition-row">
+        <span class="transition-label">Transition</span>
+        <div class="transition-pills">
+          <button
+            v-for="opt in transitionOptions"
+            :key="opt.value"
+            :class="['pill', { active: stepSeconds === opt.value }]"
+            @click="stepSeconds = opt.value"
+          >{{ opt.label }}</button>
+        </div>
+      </div>
+
       <!-- 24/7 continuous bar -->
       <div class="continuous-bar" :class="{ active: isContinuous }">
         <div class="continuous-left">
@@ -184,11 +197,19 @@ const pickerEl = ref(null)
 const favorites = ref([])
 const activeTab = ref('color')
 
+const transitionOptions = [
+  { label: 'Instant', value: 0 },
+  { label: '10 s', value: 10 },
+  { label: '30 s', value: 30 },
+  { label: '1 min', value: 60 },
+]
+
 // Scenes state
 const scenes = ref([])
 const playingScene = ref(null)
 const playingPhase = ref(null)
 const isContinuous = ref(false)
+const stepSeconds = ref(0)  // 0 = instant; 10 / 30 / 60 = slow drift
 
 // Pro lighting presets
 const proPresets = ref([])
@@ -276,17 +297,26 @@ async function fetchSceneStatus() {
   playingScene.value = data.playing
   playingPhase.value = data.phase
   isContinuous.value = data.continuous
+  stepSeconds.value = data.step_seconds ?? 0
 }
 
 async function playScene(key) {
-  await fetch(`/api/scenes/${key}/play`, { method: 'POST' })
+  await fetch(`/api/scenes/${key}/play`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ step_seconds: stepSeconds.value }),
+  })
   playingScene.value = key
   playingPhase.value = 0
   isContinuous.value = false
 }
 
 async function startContinuous() {
-  await fetch('/api/scenes/continuous', { method: 'POST' })
+  await fetch('/api/scenes/continuous', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ step_seconds: stepSeconds.value }),
+  })
   isContinuous.value = true
 }
 
@@ -678,8 +708,51 @@ header {
   font-size: 0.82rem;
   color: #777;
   text-align: center;
-  margin-bottom: 1.5rem;
+  margin-bottom: 1rem;
   line-height: 1.5;
+}
+
+/* ── Transition speed picker ─────────────────────────────────────────────────── */
+
+.transition-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  width: 100%;
+  margin-bottom: 1.25rem;
+}
+
+.transition-label {
+  font-size: 0.8rem;
+  color: #666;
+  white-space: nowrap;
+}
+
+.transition-pills {
+  display: flex;
+  gap: 0.35rem;
+}
+
+.pill {
+  background: #1e1e1e;
+  border: 1px solid #333;
+  color: #888;
+  border-radius: 20px;
+  padding: 0.25rem 0.75rem;
+  font-size: 0.78rem;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+}
+
+.pill:hover:not(.active) {
+  border-color: #555;
+  color: #bbb;
+}
+
+.pill.active {
+  background: #1a3a5c;
+  border-color: #2a5a8c;
+  color: #7bbfff;
 }
 
 .scene-cards {

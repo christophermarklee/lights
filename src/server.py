@@ -208,6 +208,7 @@ def _save_state() -> None:
         "r": _current_rgb[0],
         "g": _current_rgb[1],
         "b": _current_rgb[2],
+        "step_seconds": _step_seconds,
     }))
 
 # ── State ─────────────────────────────────────────────────────────────────────
@@ -221,10 +222,16 @@ _scene_task: asyncio.Task | None = None
 _scene_name: str | None = None
 _scene_phase: int | None = None
 _continuous: bool = False
+_step_seconds: float = 0.0  # 0 = instant 3-s fade; >0 = slow drift over full hold time
 
 
-async def _play_scene_phases(key: str) -> None:
-    """Play all phases of one scene. Propagates CancelledError."""
+async def _play_scene_phases(key: str, step_seconds: float = 0.0) -> None:
+    """Play all phases of one scene. Propagates CancelledError.
+
+    step_seconds=0  → original behaviour: 3 s fast-fade then static hold.
+    step_seconds>0  → slow drift: colour transitions evenly over the full
+                      hold_minutes duration, updating every step_seconds.
+    """
     global _current_rgb, _scene_name, _scene_phase
     scene = _SCENES_BY_KEY.get(key)
     if not scene:
@@ -234,33 +241,55 @@ async def _play_scene_phases(key: str) -> None:
         _scene_phase = i
         target = (phase["r"], phase["g"], phase["b"])
         from_rgb = _current_rgb
-        # 3-second smooth fade (60 steps × 50 ms)
-        for j in range(1, 61):
-            t = j / 60
-            r = round(from_rgb[0] + (target[0] - from_rgb[0]) * t)
-            g = round(from_rgb[1] + (target[1] - from_rgb[1]) * t)
-            b = round(from_rgb[2] + (target[2] - from_rgb[2]) * t)
-            if _clients:
-                try:
-                    await set_all(_clients, r, g, b)
-                except RuntimeError:
-                    pass
-            _current_rgb = (r, g, b)
-            await _broadcast(r, g, b)
-            await asyncio.sleep(0.05)
-        # Hold — sleep in short slices to stay responsive to cancellation
         hold_s = phase["hold_minutes"] * 60
-        slept = 0.0
-        while slept < hold_s:
-            await asyncio.sleep(min(1.0, hold_s - slept))
-            slept += 1.0
+
+        if step_seconds <= 0:
+            # 3-second smooth fade (60 steps × 50 ms) then static hold
+            for j in range(1, 61):
+                t = j / 60
+                r = round(from_rgb[0] + (target[0] - from_rgb[0]) * t)
+                g = round(from_rgb[1] + (target[1] - from_rgb[1]) * t)
+                b = round(from_rgb[2] + (target[2] - from_rgb[2]) * t)
+                if _clients:
+                    try:
+                        await set_all(_clients, r, g, b)
+                    except RuntimeError:
+                        pass
+                _current_rgb = (r, g, b)
+                await _broadcast(r, g, b)
+                await asyncio.sleep(0.05)
+            slept = 0.0
+            while slept < hold_s:
+                await asyncio.sleep(min(1.0, hold_s - slept))
+                slept += 1.0
+        else:
+            # Slow drift: spread the fade over the full hold time.
+            # Each step is step_seconds apart; colour nudges by 1/steps each time.
+            steps = max(1, round(hold_s / step_seconds))
+            for j in range(1, steps + 1):
+                t = j / steps
+                r = round(from_rgb[0] + (target[0] - from_rgb[0]) * t)
+                g = round(from_rgb[1] + (target[1] - from_rgb[1]) * t)
+                b = round(from_rgb[2] + (target[2] - from_rgb[2]) * t)
+                if _clients:
+                    try:
+                        await set_all(_clients, r, g, b)
+                    except RuntimeError:
+                        pass
+                _current_rgb = (r, g, b)
+                await _broadcast(r, g, b)
+                # Sleep in 1 s slices so cancellation stays responsive
+                slept = 0.0
+                while slept < step_seconds:
+                    await asyncio.sleep(min(1.0, step_seconds - slept))
+                    slept += 1.0
 
 
 async def _run_scene(key: str) -> None:
     """Single-scene background task."""
     global _scene_name, _scene_phase
     try:
-        await _play_scene_phases(key)
+        await _play_scene_phases(key, _step_seconds)
     except asyncio.CancelledError:
         pass
     finally:
@@ -308,7 +337,7 @@ async def _run_continuous() -> None:
     key = _scene_for_now()
     try:
         while True:
-            await _play_scene_phases(key)
+            await _play_scene_phases(key, _step_seconds)
             key = _next_scene_key(key)
     except asyncio.CancelledError:
         pass
@@ -345,10 +374,11 @@ async def _broadcast(r: int, g: int, b: int) -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _clients, _favorites, _current_rgb, _scene_task
+    global _clients, _favorites, _current_rgb, _scene_task, _step_seconds
     _favorites = _load_favorites()
     saved = _load_state()
     _current_rgb = (saved["r"], saved["g"], saved["b"])
+    _step_seconds = float(saved.get("step_seconds", 0.0))
     _clients = await connect_devices()
     # Restore last color to devices
     if _clients and any(_current_rgb):
@@ -390,6 +420,10 @@ class FavoritePayload(BaseModel):
     g: int = Field(ge=0, le=255)
     b: int = Field(ge=0, le=255)
     name: str = ""
+
+
+class SceneStartPayload(BaseModel):
+    step_seconds: float = 0.0
 
 
 @app.get("/api/favorites")
@@ -485,12 +519,13 @@ async def get_scene_status():
         label = scene["phases"][_scene_phase]["label"]
     else:
         label = None
-    return {"playing": _scene_name, "phase": _scene_phase, "phase_label": label, "continuous": _continuous}
+    return {"playing": _scene_name, "phase": _scene_phase, "phase_label": label, "continuous": _continuous, "step_seconds": _step_seconds}
 
 
 @app.post("/api/scenes/continuous")
-async def start_continuous():
-    global _scene_task
+async def start_continuous(payload: SceneStartPayload = SceneStartPayload()):
+    global _scene_task, _step_seconds
+    _step_seconds = payload.step_seconds
     if _scene_task and not _scene_task.done():
         _scene_task.cancel()
         try:
@@ -503,10 +538,11 @@ async def start_continuous():
 
 
 @app.post("/api/scenes/{key}/play")
-async def play_scene(key: str):
-    global _scene_task
+async def play_scene(key: str, payload: SceneStartPayload = SceneStartPayload()):
+    global _scene_task, _step_seconds
     if key not in _SCENES_BY_KEY:
         raise HTTPException(status_code=404, detail="Scene not found")
+    _step_seconds = payload.step_seconds
     if _scene_task and not _scene_task.done():
         _scene_task.cancel()
         try:
