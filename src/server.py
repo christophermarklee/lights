@@ -16,6 +16,7 @@ from .main import (
     ELK_WRITE_UUID,
     ELK_TURN_ON,
     ELK_TURN_OFF,
+    DEVICES,
 )
 
 # ── Scene definitions (science-based circadian lighting) ──────────────────────
@@ -229,8 +230,8 @@ async def _play_scene_phases(key: str, step_seconds: float = 0.0) -> None:
     """Play all phases of one scene. Propagates CancelledError.
 
     step_seconds=0  → original behaviour: 3 s fast-fade then static hold.
-    step_seconds>0  → slow drift: colour transitions evenly over the full
-                      hold_minutes duration, updating every step_seconds.
+    step_seconds>0  → fade to the target colour over step_seconds (1 step/s),
+                      then hold static for the remaining phase time.
     """
     global _current_rgb, _scene_name, _scene_phase
     scene = _SCENES_BY_KEY.get(key)
@@ -263,11 +264,11 @@ async def _play_scene_phases(key: str, step_seconds: float = 0.0) -> None:
                 await asyncio.sleep(min(1.0, hold_s - slept))
                 slept += 1.0
         else:
-            # Slow drift: spread the fade over the full hold time.
-            # Each step is step_seconds apart; colour nudges by 1/steps each time.
-            steps = max(1, round(hold_s / step_seconds))
-            for j in range(1, steps + 1):
-                t = j / steps
+            # User-configurable fade: transition to target over step_seconds
+            # (one 1-second step per second), then hold for the rest of the phase.
+            fade_steps = max(1, round(step_seconds))
+            for j in range(1, fade_steps + 1):
+                t = j / fade_steps
                 r = round(from_rgb[0] + (target[0] - from_rgb[0]) * t)
                 g = round(from_rgb[1] + (target[1] - from_rgb[1]) * t)
                 b = round(from_rgb[2] + (target[2] - from_rgb[2]) * t)
@@ -278,11 +279,12 @@ async def _play_scene_phases(key: str, step_seconds: float = 0.0) -> None:
                         pass
                 _current_rgb = (r, g, b)
                 await _broadcast(r, g, b)
-                # Sleep in 1 s slices so cancellation stays responsive
-                slept = 0.0
-                while slept < step_seconds:
-                    await asyncio.sleep(min(1.0, step_seconds - slept))
-                    slept += 1.0
+                await asyncio.sleep(1.0)
+            remaining = max(0.0, hold_s - step_seconds)
+            slept = 0.0
+            while slept < remaining:
+                await asyncio.sleep(min(1.0, remaining - slept))
+                slept += 1.0
 
 
 async def _run_scene(key: str) -> None:
@@ -350,13 +352,33 @@ async def _run_continuous() -> None:
 async def _reconnect_if_needed() -> None:
     """Replace any disconnected clients by re-running device discovery."""
     global _clients
-    if any(not c.is_connected for c in _clients):
+    if not _clients or any(not c.is_connected for c in _clients):
         for c in _clients:
             try:
                 await c.disconnect()
             except Exception:
                 pass
         _clients = await connect_devices()
+
+
+async def _keepalive_loop() -> None:
+    """Periodically reconnect any dropped BLE devices in the background."""
+    while True:
+        await asyncio.sleep(30)
+        try:
+            await _reconnect_if_needed()
+        except Exception as exc:
+            print(f"Keepalive reconnect error: {exc}")
+
+
+async def _cancel_scene() -> None:
+    """Cancel the running scene task, if any, and wait for it to finish."""
+    if _scene_task and not _scene_task.done():
+        _scene_task.cancel()
+        try:
+            await _scene_task
+        except (asyncio.CancelledError, Exception):
+            pass
 
 
 async def _broadcast(r: int, g: int, b: int) -> None:
@@ -389,7 +411,13 @@ async def lifespan(app: FastAPI):
     # Resume mode: continuous by default, or if that's what was running
     if saved.get("mode", "continuous") == "continuous":
         _scene_task = asyncio.create_task(_run_continuous())
+    keepalive_task = asyncio.create_task(_keepalive_loop())
     yield
+    keepalive_task.cancel()
+    try:
+        await keepalive_task
+    except asyncio.CancelledError:
+        pass
     for c in _clients:
         try:
             await c.disconnect()
@@ -452,6 +480,19 @@ async def delete_favorite(index: int):
 async def get_state():
     r, g, b = _current_rgb
     return {"connected": len(_clients), "r": r, "g": g, "b": b}
+
+
+@app.get("/api/devices")
+async def get_devices():
+    connected_addresses = {c.address for c in _clients if c.is_connected}
+    return [
+        {
+            "name": d["name"],
+            "address": d["address"],
+            "connected": d["address"] in connected_addresses,
+        }
+        for d in DEVICES
+    ]
 
 
 @app.post("/api/color")
@@ -526,12 +567,7 @@ async def get_scene_status():
 async def start_continuous(payload: SceneStartPayload = SceneStartPayload()):
     global _scene_task, _step_seconds
     _step_seconds = payload.step_seconds
-    if _scene_task and not _scene_task.done():
-        _scene_task.cancel()
-        try:
-            await _scene_task
-        except (asyncio.CancelledError, Exception):
-            pass
+    await _cancel_scene()
     _scene_task = asyncio.create_task(_run_continuous())
     _save_state()
     return {"ok": True, "continuous": True}
@@ -543,12 +579,7 @@ async def play_scene(key: str, payload: SceneStartPayload = SceneStartPayload())
     if key not in _SCENES_BY_KEY:
         raise HTTPException(status_code=404, detail="Scene not found")
     _step_seconds = payload.step_seconds
-    if _scene_task and not _scene_task.done():
-        _scene_task.cancel()
-        try:
-            await _scene_task
-        except (asyncio.CancelledError, Exception):
-            pass
+    await _cancel_scene()
     _scene_task = asyncio.create_task(_run_scene(key))
     _save_state()
     return {"ok": True, "playing": key}
@@ -556,13 +587,7 @@ async def play_scene(key: str, payload: SceneStartPayload = SceneStartPayload())
 
 @app.post("/api/scenes/stop")
 async def stop_scene():
-    global _scene_task
-    if _scene_task and not _scene_task.done():
-        _scene_task.cancel()
-        try:
-            await _scene_task
-        except (asyncio.CancelledError, Exception):
-            pass
+    await _cancel_scene()
     _save_state()
     return {"ok": True}
 

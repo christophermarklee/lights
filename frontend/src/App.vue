@@ -1,9 +1,27 @@
 <template>
   <div class="app">
     <header :style="{ background: swatchColor }">
-      <span class="hex" :style="{ color: fgColor }">{{ hexColor }}</span>
+      <div class="header-left">
+        <span class="hex" :style="{ color: fgColor }">{{ hexColor }}</span>
+        <div v-if="hasDrift" class="color-drift" :style="{ color: fgColor }">
+          <span class="drift-chip" :style="{ background: hexColor }" />
+          <span class="drift-label">UI&nbsp;{{ hexColor }}</span>
+          <span class="drift-arrow">→</span>
+          <span class="drift-chip" :style="{ background: deviceHexColor }" />
+          <span class="drift-label">Device&nbsp;{{ deviceHexColor }}</span>
+        </div>
+      </div>
       <div class="header-right">
-        <span class="status" :style="{ color: fgColor }">{{ connectedText }}</span>
+        <div class="device-status">
+          <div v-for="dev in devices" :key="dev.address" class="device-dot-row" :style="{ color: fgColor }">
+            <span class="device-dot" :class="dev.connected ? 'dot-on' : 'dot-off'" />
+            <span>{{ dev.name }}</span>
+          </div>
+          <div v-if="!devices.length" class="device-dot-row" :style="{ color: fgColor }">
+            <span class="device-dot dot-scanning" />
+            <span style="opacity:0.6">Connecting…</span>
+          </div>
+        </div>
         <div class="btn-row">
           <button class="off-btn" :style="{ color: fgColor, borderColor: fgColor }" @click="turnOn">Turn on</button>
           <button class="off-btn" :style="{ color: fgColor, borderColor: fgColor }" @click="turnOff">Turn off</button>
@@ -188,14 +206,15 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import iro from '@jaames/iro'
 
 const rgb = ref({ r: 0, g: 0, b: 0 })
-const connected = ref(0)
 const pickerEl = ref(null)
 const favorites = ref([])
-const activeTab = ref('color')
+const devices = ref([])
+const activeTab = ref(localStorage.getItem('activeTab') || 'color')
+watch(activeTab, (val) => localStorage.setItem('activeTab', val))
 
 const transitionOptions = [
   { label: 'Instant', value: 0 },
@@ -256,6 +275,8 @@ let fromRemote = false
 let debounce = null
 let statusPoll = null
 
+const deviceRgb = ref({ r: 0, g: 0, b: 0 })
+
 const swatchColor = computed(() => `rgb(${rgb.value.r},${rgb.value.g},${rgb.value.b})`)
 const hexColor = computed(() => {
   const { r, g, b } = rgb.value
@@ -265,15 +286,47 @@ const fgColor = computed(() => {
   const { r, g, b } = rgb.value
   return 0.2126 * r + 0.7152 * g + 0.0722 * b > 128 ? '#000' : '#fff'
 })
-const connectedText = computed(
-  () => `${connected.value} device${connected.value !== 1 ? 's' : ''} connected`
-)
+const deviceHexColor = computed(() => {
+  const { r, g, b } = deviceRgb.value
+  return `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`
+})
+const hasDrift = computed(() => {
+  const threshold = 8
+  return (
+    Math.abs(rgb.value.r - deviceRgb.value.r) > threshold ||
+    Math.abs(rgb.value.g - deviceRgb.value.g) > threshold ||
+    Math.abs(rgb.value.b - deviceRgb.value.b) > threshold
+  )
+})
 
 async function fetchState() {
   const res = await fetch('/api/state')
   const data = await res.json()
   rgb.value = { r: data.r, g: data.g, b: data.b }
-  connected.value = data.connected
+  deviceRgb.value = { r: data.r, g: data.g, b: data.b }
+}
+
+async function fetchDeviceRgb() {
+  try {
+    const res = await fetch('/api/state')
+    if (!res.ok) return
+    const data = await res.json()
+    deviceRgb.value = { r: data.r, g: data.g, b: data.b }
+  } catch {
+    // non-critical
+  }
+}
+
+async function fetchDevices() {
+  try {
+    const res = await fetch('/api/devices')
+    if (!res.ok) return
+    const data = await res.json()
+    if (!Array.isArray(data)) return
+    devices.value = data
+  } catch {
+    // silently ignore — device status is non-critical
+  }
 }
 
 async function fetchFavorites() {
@@ -291,13 +344,17 @@ async function fetchProPresets() {
   proPresets.value = await res.json()
 }
 
-async function fetchSceneStatus() {
+async function fetchSceneStatus({ syncTransition = false } = {}) {
   const res = await fetch('/api/scenes/status')
   const data = await res.json()
   playingScene.value = data.playing
   playingPhase.value = data.phase
   isContinuous.value = data.continuous
-  stepSeconds.value = data.step_seconds ?? 0
+  // Only sync the transition setting on the initial page load.
+  // After that, the user's pill selection is the source of truth.
+  if (syncTransition) {
+    stepSeconds.value = data.step_seconds ?? 0
+  }
 }
 
 async function playScene(key) {
@@ -383,11 +440,11 @@ function applyRemoteColor(r, g, b) {
 }
 
 onMounted(async () => {
-  await Promise.all([fetchState(), fetchFavorites(), fetchScenes(), fetchProPresets()])
-  await fetchSceneStatus()
+  await Promise.all([fetchState(), fetchFavorites(), fetchScenes(), fetchProPresets(), fetchDevices()])
+  await fetchSceneStatus({ syncTransition: true })
 
-  // Poll scene status every 3 seconds
-  statusPoll = setInterval(fetchSceneStatus, 3000)
+  // Poll scene status, device connection, and device color every 3 seconds
+  statusPoll = setInterval(() => { fetchSceneStatus(); fetchDevices(); fetchDeviceRgb() }, 3000)
 
   picker = new iro.ColorPicker(pickerEl.value, {
     width: 280,
@@ -1004,5 +1061,91 @@ header {
   font-size: 0.75rem;
   color: #555;
   font-variant-numeric: tabular-nums;
+}
+
+/* ── Header left ─────────────────────────────────────────────────────────── */
+
+.header-left {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.color-drift {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.72rem;
+  font-family: monospace;
+  opacity: 0.9;
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
+  animation: drift-pulse 2s ease-in-out infinite;
+}
+
+.drift-chip {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  flex-shrink: 0;
+}
+
+.drift-arrow {
+  opacity: 0.7;
+}
+
+.drift-label {
+  opacity: 0.85;
+}
+
+@keyframes drift-pulse {
+  0%, 100% { opacity: 0.9; }
+  50% { opacity: 0.5; }
+}
+
+/* ── Device status dots ─────────────────────────────────────────────────────── */
+
+.device-status {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  align-items: flex-end;
+}
+
+.device-dot-row {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.75rem;
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
+  transition: color 0.25s;
+}
+
+.device-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.dot-on {
+  background: #50ff80;
+  box-shadow: 0 0 5px #50ff80bb;
+}
+
+.dot-off {
+  background: #ff5050;
+  box-shadow: 0 0 5px #ff5050bb;
+}
+
+.dot-scanning {
+  background: #aaa;
+  animation: pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
 }
 </style>
