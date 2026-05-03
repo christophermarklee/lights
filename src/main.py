@@ -14,6 +14,7 @@ ELK_TURN_OFF = bytes([0x7e, 0x00, 0x04, 0x00, 0x00, 0x00, 0x00, 0xff, 0xef])
 
 DEVICES = [
     {"address": "BE:67:00:1E:01:44", "name": "ELK-BLEDOM"},
+    {"address": "BE:67:00:2D:03:77", "name": "ELK-BLEDOM07"},
     {"address": "BE:28:8E:00:26:63", "name": "MELK-OA21 63"},
     {"address": "BE:28:8E:00:23:5C", "name": "MELK-OA21 5C"},
 ]
