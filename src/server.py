@@ -371,6 +371,27 @@ async def _keepalive_loop() -> None:
             print(f"Keepalive reconnect error: {exc}")
 
 
+async def _connect_devices_startup_resilient(timeout_seconds: float = 45.0) -> list:
+    """Try initial BLE connect for a limited window, then continue app startup.
+
+    On some boots, BlueZ comes up slightly after the container. In that case we
+    should keep the API online and let the keepalive loop connect later.
+    """
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + max(0.0, timeout_seconds)
+    attempt = 0
+    while True:
+        attempt += 1
+        try:
+            return await connect_devices()
+        except Exception as exc:
+            if loop.time() >= deadline:
+                print(f"Startup BLE connect skipped after {attempt} attempts: {exc!r}")
+                return []
+            print(f"Startup BLE connect attempt {attempt} failed: {exc!r}; retrying...")
+            await asyncio.sleep(3)
+
+
 async def _cancel_scene() -> None:
     """Cancel the running scene task, if any, and wait for it to finish."""
     if _scene_task and not _scene_task.done():
@@ -401,7 +422,7 @@ async def lifespan(app: FastAPI):
     saved = _load_state()
     _current_rgb = (saved["r"], saved["g"], saved["b"])
     _step_seconds = float(saved.get("step_seconds", 0.0))
-    _clients = await connect_devices()
+    _clients = await _connect_devices_startup_resilient()
     # Restore last color to devices
     if _clients and any(_current_rgb):
         try:
